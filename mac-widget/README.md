@@ -27,6 +27,25 @@ open PilotCadetWidget.xcodeproj      # host app target + widget extension target
 5. Add the widget: *System Settings → Desktop & Dock → Widgets → Edit Widgets*, or right-click
    the desktop → *Edit Widgets* → search "Pilot Cadet Watch".
 
+## Installing it (and why you should use install.sh)
+
+```bash
+./install.sh
+```
+
+It builds Release, copies the app to `/Applications`, **removes and unregisters the build-folder
+copy**, registers the installed extension, and bounces the widget services.
+
+That middle step matters. Every Xcode build registers its product with LaunchServices and
+`pluginkit`, so `…/DerivedData/…/Release/PilotCadet.app` and `/Applications/PilotCadet.app` are two
+registrations of the *same* widget bundle identifier. The widget gallery can read the stale one,
+and the symptom is confusing: the widget appears, but a size you just added is **greyed out** in
+*Edit Widgets*, because the gallery still believes the older build's set of supported sizes. That
+is exactly what happened when `systemSmall` was added.
+
+If a size is still greyed out after `install.sh`, log out and back in once — the gallery keeps a
+per-user cache that only a session restart reliably clears.
+
 ## Verifying a build without opening Xcode
 
 ```bash
@@ -97,6 +116,7 @@ entirely, since Xcode ships a matched toolchain and its own SDKs.
 | `Info.plist` | Widget extension `Info.plist` (`com.apple.widgetkit-extension`) |
 | `*.entitlements` | App Sandbox, network client, App Group (identical group in both) |
 | `Package.swift` | SwiftPM view of the shared, Xcode-independent sources |
+| `install.sh` | Build, install to /Applications, clean stale registrations, refresh the gallery |
 | `verify-build.sh` | Build verification; falls back to CLT-only checks |
 | `WidgetContentViews.swift` | The layout for every widget size (no `@main`, so it can be rendered offscreen) |
 | `preview/` | Offscreen renderer + layout fit checks (`preview/render.sh`) |
@@ -116,6 +136,15 @@ entirely, since Xcode ships a matched toolchain and its own SDKs.
 WidgetKit's own content margins are disabled (`.contentMarginsDisabled()`) so the margin is 12 pt
 (small) or 14 pt (everything else), matching `preview/Renderer.swift` exactly. Layouts are checked
 at their real size by `preview/render.sh`, which fails if a layout needs more height than it has.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| The widget is missing from the gallery entirely | The extension is not registered. Run `./install.sh`; it verifies there is exactly one registration afterwards. |
+| A size is greyed out in *Edit Widgets* | A stale build-folder registration is shadowing the installed one. `./install.sh` removes it. If it persists, log out and back in. |
+| The widget shows sample data | It is falling back to `BundledStatus.json` because the feed URL is unreachable — the footer says so and shows the endpoint it tried. |
+| The widget shows yesterday's statuses | WidgetKit refreshes timelines at the system's discretion; opening the host app calls `reloadAllTimelines()`, which forces a refresh. |
 
 ## How the widget picks its data
 

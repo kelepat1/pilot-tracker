@@ -315,6 +315,7 @@ offscreen at the real point size of every family:
 
 ```bash
 mac-widget/preview/render.sh      # writes PNGs to mac-widget/preview/out/ and checks fit
+mac-widget/install.sh             # build, install to /Applications, clean stale registrations
 ```
 
 It renders each size (plus long-name, offline and dark-appearance variants) and then compares each
