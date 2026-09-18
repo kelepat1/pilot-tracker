@@ -82,12 +82,13 @@ jobs:
           echo "--- linked frameworks of the extension ---"
           otool -L "$APEX/Contents/MacOS/PilotCadetWidgetExtension" | grep -Ei "widgetkit|swiftui"
 
-      - name: Sanity-check the Python monitor in the same run
-        # The monitor and the widget share a contract (status.json). If one side changes shape,
-        # the other breaks silently on the user's desktop - so check both here.
+      - name: Check the status.json <-> Models.swift contract
+        # Deliberately standard-library only: the macOS runner's python3 is Homebrew-managed and
+        # refuses `pip install -r` with PEP 668 "externally-managed-environment", which failed
+        # this job. The Xcode build is what this job is for; the full pytest suite runs in the
+        # ubuntu job. What matters here is that a widget change has not broken the JSON contract
+        # the desktop app depends on.
         run: |
-          python3 -m pip install --quiet -r scraper/requirements.txt
-          python3 -m pytest scraper/tests -q
           python3 - <<'PY'
           import json, re, sys
           from pathlib import Path
@@ -103,5 +104,5 @@ jobs:
               sys.exit(f"status.json is missing fields the widget decodes: {missing}")
           if len(doc["programs"]) != 7:
               sys.exit(f"expected 7 programmes, found {len(doc['programs'])}")
-          print("status.json <-> Models.swift contract: OK")
+          print(f"contract OK: {len(doc['programs'])} programmes, {len(expected)} fields per row")
           PY
