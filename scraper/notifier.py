@@ -27,7 +27,8 @@ Telegram : ``TELEGRAM_BOT_TOKEN``, ``TELEGRAM_CHAT_ID`` (comma-separated ids all
 Email    : ``EMAIL_API_KEY`` (Resend), ``EMAIL_FROM``, ``EMAIL_TO`` (comma-separated)
            ``SMTP_HOST``, ``SMTP_PORT``, ``SMTP_USER``, ``SMTP_PASS``, ``SMTP_SECURITY``
            (``starttls`` | ``ssl`` | ``none``)
-Shared   : ``NOTIFY_DRY_RUN`` (``1`` to force dry-run), ``NOTIFY_MIN_PRIORITY``
+Shared   : ``NOTIFY_CHANNELS`` (``telegram,email`` by default; set ``email`` to use email
+           only), ``NOTIFY_DRY_RUN`` (``1`` to force dry-run)
 """
 
 from __future__ import annotations
@@ -277,11 +278,14 @@ def subject_for(transitions: Sequence[Dict[str, Any]]) -> str:
         return "🚨 APPLICATIONS OPEN: %s%s" % (names, more)
     if len(transitions) == 1:
         transition = transitions[0]
-        return "%s %s — %s" % (
+        # Note the parenthesis placement: .strip() must apply to the formatted string, not to
+        # the argument tuple (which raised AttributeError for any single non-OPEN transition -
+        # an interest alert, or notifier.py --self-test).
+        return ("%s %s — %s" % (
             STATUS_EMOJI.get(str(transition.get("to", "")), ""),
             TRIGGER_SUBJECT.get(str(transition.get("trigger", "")), "Update"),
             transition.get("airline", ""),
-        ).strip()
+        )).strip()
     return "Pilot cadet update: %d status changes" % len(transitions)
 
 
@@ -509,12 +513,53 @@ def _resend_post(payload: Dict[str, Any], api_key: str) -> Dict[str, Any]:
 # --------------------------------------------------------------------------------------
 
 
+DEFAULT_CHANNELS: Tuple[str, ...] = ("telegram", "email")
+
+# Channel name -> function *name*, resolved from the module at dispatch time. Holding direct
+# references here would capture the functions at import, which silently defeats monkeypatching
+# (and any future override) of the channel functions.
+CHANNEL_FUNCTIONS: Dict[str, str] = {
+    "telegram": "send_telegram",
+    "email": "send_email",
+}
+
+
+def enabled_channels(raw: Optional[str] = None) -> List[str]:
+    """Which channels to attempt, from ``NOTIFY_CHANNELS`` (comma-separated).
+
+    Unset means every channel - a missing credential still reports ``skipped`` rather than
+    failing. Setting it (for example ``NOTIFY_CHANNELS=email``) stops the other channel from
+    being contacted or reported at all, so a deliberately-unused channel does not clutter every
+    run's log with "skipped".
+    """
+    if raw is None:
+        raw = os.environ.get("NOTIFY_CHANNELS", "")
+    raw = (raw or "").strip()
+    if not raw:
+        return list(DEFAULT_CHANNELS)
+
+    names = [n.strip().lower() for n in raw.replace(";", ",").split(",") if n.strip()]
+    unknown = [n for n in names if n not in CHANNEL_FUNCTIONS]
+    if unknown:
+        logger.warning(
+            "ignoring unknown NOTIFY_CHANNELS entries: %s (known: %s)",
+            ", ".join(unknown),
+            ", ".join(CHANNEL_FUNCTIONS),
+        )
+    selected = [n for n in names if n in CHANNEL_FUNCTIONS]
+    if not selected:
+        logger.warning("NOTIFY_CHANNELS selected no usable channel; falling back to %s", ", ".join(DEFAULT_CHANNELS))
+        return list(DEFAULT_CHANNELS)
+    return selected
+
+
 def dispatch_transitions(
     transitions: Sequence[Dict[str, Any]],
     dry_run: Optional[bool] = None,
     include_test_message: bool = False,
+    channels: Optional[Sequence[str]] = None,
 ) -> DispatchReport:
-    """Fan a transition list out to every configured channel. Never raises."""
+    """Fan a transition list out to the enabled channels. Never raises."""
     if dry_run is None:
         dry_run = os.environ.get("NOTIFY_DRY_RUN", "").strip() in ("1", "true", "yes")
 
@@ -542,17 +587,32 @@ def dispatch_transitions(
             }
         ]
 
-    logger.info("dispatching %d transition(s) (dry_run=%s)", len(transitions), bool(dry_run))
-    for channel in (send_telegram, send_email):
+    selected = list(channels) if channels else enabled_channels()
+    logger.info(
+        "dispatching %d transition(s) via %s (dry_run=%s)",
+        len(transitions),
+        ", ".join(selected),
+        bool(dry_run),
+    )
+
+    for name in selected:
+        channel = globals()[CHANNEL_FUNCTIONS[name]]
         try:
             result = channel(transitions, dry_run=bool(dry_run))
         except Exception as exc:  # defensive: a channel must never break the run
-            result = ChannelResult(channel=channel.__name__, ok=False, detail="%s: %s" % (type(exc).__name__, exc))
+            result = ChannelResult(channel=name, ok=False, detail="%s: %s" % (type(exc).__name__, exc))
         logger.info("channel %s -> %s (%s)", result.channel, result.status_word, result.detail)
         report.add(result)
 
     if report.all_failed:
         logger.error("ALL notification channels failed: %s", report.summary())
+    elif report.results and all(r.skipped for r in report.results):
+        # Worth saying out loud when alerting is the entire point of the project: the run will
+        # still commit and publish, but nothing will reach the user's phone or inbox.
+        logger.warning(
+            "no alert channel is configured (%s) - status will still be published",
+            report.summary(),
+        )
     return report
 
 
@@ -582,6 +642,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--dry-run", action="store_true", help="render payloads without sending")
     parser.add_argument("--self-test", action="store_true", help="send a test message through every channel")
+    parser.add_argument(
+        "--channels",
+        default=None,
+        help="comma-separated channels to use, overriding NOTIFY_CHANNELS (telegram,email)",
+    )
     parser.add_argument("--fail-on-error", action="store_true", help="exit 1 if every configured channel failed")
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser.parse_args(argv)
@@ -597,7 +662,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     transitions = [] if args.self_test else load_transitions(Path(args.transitions))
-    report = dispatch_transitions(transitions, dry_run=args.dry_run, include_test_message=args.self_test)
+    report = dispatch_transitions(
+        transitions,
+        dry_run=args.dry_run,
+        include_test_message=args.self_test,
+        channels=[c for c in (args.channels or "").replace(";", ",").split(",") if c.strip()] or None,
+    )
 
     if args.fail_on_error and report.all_failed:
         return 1

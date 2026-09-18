@@ -230,3 +230,91 @@ def test_dry_run_cli_exits_zero_without_credentials(tmp_path, monkeypatch):
     path = tmp_path / "transitions.json"
     path.write_text(json.dumps({"transitions": [_transition()]}), encoding="utf-8")
     assert notifier.main(["--transitions", str(path), "--dry-run"]) == 0
+
+
+# --------------------------------------------------------------------------------------
+# Channel selection (NOTIFY_CHANNELS)
+# --------------------------------------------------------------------------------------
+
+
+def test_notify_channels_email_only_never_touches_telegram(monkeypatch):
+    """The configured setup: email is the only alert channel."""
+    monkeypatch.setenv("NOTIFY_CHANNELS", "email")
+    monkeypatch.delenv("EMAIL_TO", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    called = []
+    monkeypatch.setattr(notifier, "send_telegram", lambda *a, **k: called.append("telegram"))
+    real_email = notifier.send_email
+    monkeypatch.setattr(notifier, "send_email", lambda *a, **k: called.append("email") or real_email(*a, **k))
+
+    report = notifier.dispatch_transitions([_transition()], dry_run=False)
+    assert [r.channel for r in report.results] == ["email"]
+    assert called == ["email"]  # telegram was never contacted
+    assert notifier.enabled_channels("email") == ["email"]
+
+
+def test_unknown_channel_names_are_ignored_not_fatal():
+    assert notifier.enabled_channels("email,carrier-pigeon") == ["email"]
+    assert notifier.enabled_channels(";email;") == ["email"]
+
+
+def test_unusable_channel_list_falls_back_to_all(monkeypatch):
+    """A typo must not silently disable alerting altogether."""
+    assert notifier.enabled_channels("carrier-pigeon") == ["telegram", "email"]
+
+
+def test_unset_channels_attempts_everything(monkeypatch):
+    monkeypatch.delenv("NOTIFY_CHANNELS", raising=False)
+    assert notifier.enabled_channels() == ["telegram", "email"]
+
+
+def test_dispatch_channels_argument_overrides_env(monkeypatch):
+    monkeypatch.setenv("NOTIFY_CHANNELS", "telegram")
+    monkeypatch.setenv("EMAIL_TO", "pilot@example.com")
+    monkeypatch.setenv("EMAIL_API_KEY", "re_fake")
+    monkeypatch.setattr(notifier, "send_telegram", lambda *a, **k: notifier.ChannelResult("telegram", True, "sent"))
+    monkeypatch.setattr(notifier, "send_email", lambda *a, **k: notifier.ChannelResult("email", True, "sent"))
+
+    report = notifier.dispatch_transitions([_transition()], dry_run=False, channels=["email"])
+    assert [r.channel for r in report.results] == ["email"]
+
+
+def test_all_channels_skipped_is_reported_as_a_warning(monkeypatch, caplog):
+    """Email-only setup with no credentials: the run must still be considered successful."""
+    monkeypatch.setenv("NOTIFY_CHANNELS", "email")
+    for key in ("EMAIL_TO", "EMAIL_API_KEY", "SMTP_HOST"):
+        monkeypatch.delenv(key, raising=False)
+
+    report = notifier.dispatch_transitions([_transition()], dry_run=False)
+    assert [r.status_word for r in report.results] == ["skipped"]
+    assert report.all_failed is False
+
+
+def test_subject_for_a_single_non_open_transition():
+    """Regression: .strip() was applied to the format tuple, so this raised AttributeError.
+
+    It fires for every single non-OPEN transition (an interest/closure alert, and the
+    --self-test message), which is exactly the path that verifies a new alert channel works.
+    """
+    for to, trigger in (("INTEREST", "interest"), ("CLOSED", "closed"), ("INTEREST", "test")):
+        subject = notifier.subject_for([_transition(to=to, trigger=trigger)])
+        assert isinstance(subject, str)
+        assert "British Airways" in subject
+        assert subject == subject.strip()
+
+
+def test_self_test_end_to_end_through_the_email_channel(monkeypatch):
+    """The --self-test path must render a full email without raising."""
+    monkeypatch.setenv("NOTIFY_CHANNELS", "email")
+    monkeypatch.setenv("EMAIL_TO", "pilot@example.com")
+    monkeypatch.setenv("EMAIL_FROM", "monitor@example.com")
+    monkeypatch.setenv("EMAIL_API_KEY", "re_fake")
+
+    def explode(*a, **k):  # pragma: no cover
+        raise AssertionError("dry-run must not perform network I/O")
+
+    monkeypatch.setattr(notifier, "_resend_post", explode)
+    report = notifier.dispatch_transitions([], dry_run=True, include_test_message=True)
+    assert [r.channel for r in report.results] == ["email"]
+    assert report.results[0].ok

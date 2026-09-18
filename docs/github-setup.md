@@ -144,35 +144,20 @@ requires approvals, approve the `publish` job when it runs.
 
 **Settings → Secrets and variables → Actions → New repository secret**, one at a time.
 
-All of them are optional. A channel with missing credentials is reported as `skipped`, never as a
+All of them are optional: a channel with missing credentials is reported as `skipped`, never as a
 failure, and the monitor still commits and publishes — so you can add them later.
 
 | Secret | Purpose |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | Telegram push |
-| `TELEGRAM_CHAT_ID` | Your chat (comma-separate several) |
-| `EMAIL_API_KEY` | Email via Resend (`re_…`) — takes priority over SMTP |
-| `EMAIL_FROM` | A verified Resend sender |
+| `EMAIL_API_KEY` | Resend API key (`re_…`) — takes priority over SMTP |
+| `EMAIL_FROM` | A verified Resend sender (`alerts@yourdomain.com`, or `onboarding@resend.dev` for testing) |
 | `EMAIL_TO` | Recipient(s), comma-separated |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_SECURITY` | SMTP fallback instead of Resend |
 
-### Telegram
-
-1. In Telegram, message **@BotFather** → send `/newbot` → follow the prompts → copy the token
-   (`123456789:AA…`) into `TELEGRAM_BOT_TOKEN`.
-2. **Send your new bot a message.** A bot cannot start a conversation with you, and until you
-   write to it your chat id cannot be discovered.
-3. Fetch your chat id:
-
-   ```bash
-   curl -s "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates" \
-     | python3 -m json.tool | grep -A3 '"chat"'
-   ```
-
-   The `"id"` value (e.g. `123456789`) is `TELEGRAM_CHAT_ID`. If the response is
-   `{"ok":true,"result":[]}`, you have not messaged the bot yet.
-   *Shortcut: message **@userinfobot** and it replies with your id.*
-4. For a group: add the bot to the group, send a message there, then use the **negative** id.
+**Alerts are email-only and fire only when a programme transitions into `OPEN`.** Telegram support
+still exists in `notifier.py`, but the workflow sets `NOTIFY_CHANNELS: email`, so Telegram is never
+contacted. To bring it back later, drop that line and add `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` — and message the bot once first, because a bot cannot start a chat with you.
 
 ### Email via Resend
 
@@ -197,9 +182,13 @@ an **App Password** — your normal password will be rejected.
 2. Leave the branch as `main` and **tick `dry_run`** for the first attempt: alerts are rendered
    into the log instead of sent, and nothing is committed.
 3. Open the finished run → the **job summary** shows a Markdown table of all seven programmes with
-   their status, evidence and passport tag. The alert step logs the exact Telegram and email
+   their status, evidence and passport tag. The alert step logs the exact email
    payloads, so you can confirm the wording before anything reaches your phone.
 4. Run it again with `dry_run` **unchecked** to do it for real.
+5. **Prove the email channel works:** run it once more with `self_test` **ticked**. That sends a
+   single test alert (subject `🟠 Update — Self test`) through the enabled channels. Alerts
+   otherwise only fire on a real transition into `OPEN`, which could be weeks away — so this is
+   the only way to confirm delivery before it matters.
 
 Expect the first real run to alert for whatever is currently `OPEN` (Wizz Air and Cathay Pacific as
 of the last sweep). That is deliberate: a first-run `OPEN` is treated as a transition, so setup is
@@ -251,7 +240,8 @@ bundled at build time, labelled as offline data with the 404 underneath.
 | Commit step fails with `403` | Step 5: Workflow permissions are still read-only. |
 | Pages URL returns `404` | Pages source is not "GitHub Actions" (step 6), or the `publish` job has not succeeded yet. |
 | Alerts say `skipped` | The relevant secrets are unset or misnamed (check exact names, step 7). |
-| Telegram "sent" but no message | You never messaged the bot, or the chat id belongs to a group the bot is not in. |
+| No email arrives but the run is green | The alert step reported `skipped` — `EMAIL_TO` or the transport secret is missing or misnamed. |
+| The run fails at *Flag an undeliverable alert* | Email delivery genuinely failed. The status commit and Pages publish already happened; check the Resend/SMTP credentials. |
 | `email skipped (no transport configured)` | Neither `EMAIL_API_KEY` nor `SMTP_HOST` is set. |
 | A programme shows `UNKNOWN` | The page was reachable but said nothing decisive — usually a bot wall or a redesign. Aer Lingus does this behind its Imperva WAF. The monitor reports it rather than guessing. |
 | Workflow never runs on schedule | Scheduled workflows are disabled on inactive repositories; open the Actions tab and re-enable, and check that Actions are allowed for the repo. |

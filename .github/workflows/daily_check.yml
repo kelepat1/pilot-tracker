@@ -2,6 +2,7 @@ name: Daily pilot cadet check
 
 # Passive daily sweep of the seven airline career portals at 08:00 UTC.
 # Nothing runs on your computer: GitHub's runners do the fetch, the diff and the alerting.
+# Alerts: email only, sent when a programme transitions into "open".
 on:
   schedule:
     - cron: "0 8 * * *"
@@ -13,6 +14,11 @@ on:
         default: ""
       dry_run:
         description: "Render alerts without sending them and without committing status.json"
+        type: boolean
+        required: false
+        default: false
+      self_test:
+        description: "Also send a test alert, to prove the email channel works"
         type: boolean
         required: false
         default: false
@@ -97,14 +103,38 @@ jobs:
               sys.exit("every programme failed this run - check the workflow logs")
           PY
 
-      - name: Dispatch alerts (Telegram + email)
-        # continue-on-error: a broken mail relay must never stop the status update from
-        # reaching your Mac widget. Alert failures are surfaced in the job log and summary.
+      - name: Send a test alert (only when self_test is ticked)
+        # Alerts fire on a transition INTO "open", so a freshly configured channel may not be
+        # exercised for weeks. This sends one deliberately, through whatever channels are enabled.
+        if: ${{ inputs.self_test }}
         continue-on-error: true
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
+          NOTIFY_CHANNELS: email
+          EMAIL_API_KEY: ${{ secrets.EMAIL_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_SECURITY: ${{ secrets.SMTP_SECURITY }}
+          NOTIFY_DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: |
+          python scraper/notifier.py --self-test --verbose
+
+      - name: Dispatch alerts by email
+        # Alerts fire only on a transition INTO "open" (the monitor's default). Add
+        # --alert-on-interest / --alert-on-closed to the command below to widen that.
+        #
+        # continue-on-error: a broken mail relay must never stop the status update from reaching
+        # your Mac widget, so the failure is caught and escalated by the next step instead.
+        #
+        # NOTIFY_CHANNELS=email means Telegram is never contacted (its code stays available: drop
+        # this line and add the TELEGRAM_* secrets to bring it back as a second channel).
+        id: notify
+        continue-on-error: true
+        env:
+          NOTIFY_CHANNELS: email
           EMAIL_API_KEY: ${{ secrets.EMAIL_API_KEY }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
@@ -117,6 +147,7 @@ jobs:
         run: |
           python scraper/notifier.py \
             --transitions build/transitions.json \
+            --fail-on-error \
             --verbose
 
       - name: Commit status.json when it changed
@@ -132,6 +163,16 @@ jobs:
           git commit -m "chore(status): daily cadet check $(date -u +'%Y-%m-%d %H:%M UTC')"
           git push
 
+      - name: Flag an undeliverable alert
+        # Email is now the only alert channel, so a silent delivery failure would mean missing an
+        # application window entirely. The notify step above is allowed to fail (the status commit
+        # and Pages publish must still happen), so this step fails the job afterwards on purpose:
+        # a red run makes GitHub email the repository owner, which is itself the fallback alarm.
+        if: ${{ steps.notify.outcome == 'failure' }}
+        run: |
+          echo "::error::Alert delivery failed - no notification reached you. See the 'Dispatch alerts by email' step above."
+          exit 1
+
       - name: Keep the run artefacts (diagnostics)
         if: always()
         uses: actions/upload-artifact@v4
@@ -146,7 +187,9 @@ jobs:
   publish:
     name: Publish status.json to GitHub Pages
     needs: check
-    if: ${{ !cancelled() && !inputs.dry_run }}
+    # always(): even if the check job ended red (for example an undeliverable alert), the
+    # last committed status.json should still be published so the widget is never stale.
+    if: ${{ always() && !cancelled() && !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

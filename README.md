@@ -1,11 +1,11 @@
 # Pilot Cadet Tracker
 
 Passive, zero-cost, serverless monitoring for **fully funded airline pilot cadet programmes**,
-with a native **macOS desktop widget** and **high-priority mobile alerts**.
+with a native **macOS desktop widget** and **high-priority email alerts**.
 
 Seven airline career portals are checked once a day by a GitHub Actions cron (`0 8 * * *`,
 08:00 UTC). Nothing runs on your computer. When a programme transitions to `OPEN`, the run
-pushes a Telegram message and an urgent email with the direct apply link, commits the new
+sends an urgent email with the direct apply link, commits the new
 `status.json`, and republishes it to GitHub Pages — which is what the macOS widget reads.
 
 ```text
@@ -15,7 +15,7 @@ pilot-tracker/
 │   └── widget_build.yml                # real xcodebuild of the widget on a macOS runner
 ├── scraper/
 │   ├── monitor.py                      # fetching, extraction, hashing, rule engine, state merge
-│   ├── notifier.py                     # Telegram + Resend/SMTP alert dispatch (failure-safe)
+│   ├── notifier.py                     # Email alerts via Resend/SMTP (Telegram optional)
 │   ├── targets.json                    # the 7 programmes: URLs, selectors, passport tags, rules
 │   ├── requirements.txt
 │   ├── fixtures/                       # offline HTML replays (incl. an OPEN-window variant set)
@@ -104,13 +104,20 @@ still commits and publishes.
 
 | Secret | Required for | Notes |
 |---|---|---|
-| `TELEGRAM_BOT_TOKEN` | Telegram push | From [@BotFather](https://t.me/BotFather) |
-| `TELEGRAM_CHAT_ID` | Telegram push | Your chat id; comma-separate several ids |
-| `TELEGRAM_MESSAGE_THREAD_ID` | Telegram push | Optional, for forum topics |
-| `EMAIL_API_KEY` | Email via Resend | `re_…`; takes priority over SMTP |
-| `EMAIL_FROM` | Email | A verified Resend sender, e.g. `alerts@yourdomain.com` |
+| `EMAIL_API_KEY` | Email via Resend (**this is the configured channel**) | `re_…`; takes priority over SMTP |
+| `EMAIL_FROM` | Email | A verified Resend sender, e.g. `alerts@yourdomain.com`, or `onboarding@resend.dev` for testing |
 | `EMAIL_TO` | Email | Comma-separated recipients |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_SECURITY` | Email via SMTP | Fallback when `EMAIL_API_KEY` is absent; `SMTP_SECURITY` is `starttls` (default), `ssl` or `none` |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_SECURITY` | Email via SMTP instead of Resend | `SMTP_SECURITY` is `starttls` (default), `ssl` or `none` |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | *not used* | Telegram is available in the code but disabled by `NOTIFY_CHANNELS: email` in the workflow. Remove that line and add these two secrets to restore it as a second channel |
+
+Only a transition **into `OPEN`** sends anything (a first-run `OPEN` counts, so setup is never
+silent). `--alert-on-interest` / `--alert-on-closed` widen that if you want more.
+
+Email arrives as a priority message (`X-Priority: 1`, `Importance: High`) with a subject prefixed
+**🚨 APPLICATIONS OPEN**, both plain-text and HTML bodies, and the direct apply link as a button.
+The notifier retries three times, falls back from Resend to SMTP if both are configured, and
+because email is the only channel here, a delivery failure fails the workflow run *after* the
+status commit — so GitHub's own failure email becomes the backstop alarm.
 
 Telegram message format: MarkdownV2, escaped correctly, with an inline **Apply now →** link. If
 Telegram rejects the Markdown (HTTP 400), the notifier automatically resends as plain text rather
@@ -121,6 +128,10 @@ than losing the alert.
 **Actions → Daily pilot cadet check → Run workflow.** Tick `dry_run` first if you want to see the
 payloads without sending anything and without committing. Then open
 `https://<username>.github.io/pilot-tracker/status.json`.
+
+Tick **`self_test`** to send one test alert through the configured channels. Worth doing right
+after adding the email secrets: alerts otherwise only fire on a real transition into `OPEN`, which
+may be weeks away, so this is how you prove the channel works.
 
 ### Step 5 — build the widget
 
@@ -202,6 +213,8 @@ cd mac-widget && ./verify-build.sh             # now runs a real xcodebuild
 ### Alerting (`scraper/notifier.py`)
 
 Only transitions **into** `OPEN` alert (first-run `OPEN` too, so setup is not silent).
+`NOTIFY_CHANNELS` (default `telegram,email`) selects which channels are attempted; the
+workflow sets it to `email`.
 `--alert-on-interest` and `--alert-on-closed` opt in to the others. Every channel is wrapped so
 that a failure can never prevent the status commit: a missed application window is the only
 outcome that actually matters.
