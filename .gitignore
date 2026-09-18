@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Monitor scratch output. build/ holds transitions.json only; the published state file is
+# status.json at the repository root and IS committed.
+build/
+scraper/out/
+
+# Local Playwright browser downloads (CI caches these instead, see the workflow).
+pw-browsers/
+.ms-playwright/
+
+# Swift Package Manager / Swift compiler caches.
+# NOTE: `.build` is not the same path as `build/` below — SwiftPM writes `.build` when you run
+# `swift build` in mac-widget/, and it must never be committed.
+.build/
+.swiftcache/
+*.xcresult
+
+# macOS
+.DS_Store
+._*
+
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+build/*.xcarchive
+
+# Editors
+.vscode/
+.idea/
+.swiftpm/

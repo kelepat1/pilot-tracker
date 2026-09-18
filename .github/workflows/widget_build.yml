@@ -1,0 +1,107 @@
+name: Build the macOS widget
+
+# Verifies that mac-widget/PilotCadetWidget.xcodeproj actually builds with a real Xcode
+# toolchain. GitHub's macOS runners ship Xcode preinstalled, which is the cheapest way to get a
+# genuine `xcodebuild` check without installing ~15 GB locally.
+#
+# Signing is disabled (CODE_SIGNING_ALLOWED=NO) because CI has no certificate: this job proves
+# that the project graph, Swift sources, Info.plist and entitlements compile and link. It does
+# not prove the widget loads in the widget gallery - that needs a signed build on your Mac.
+on:
+  push:
+    paths:
+      - "mac-widget/**"
+      - ".github/workflows/widget_build.yml"
+  pull_request:
+    paths:
+      - "mac-widget/**"
+  workflow_dispatch:
+
+concurrency:
+  group: widget-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xcodebuild:
+    name: xcodebuild (macOS runner)
+    runs-on: macos-14
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcodebuild -showsdks | head -20
+
+      - name: List the project's targets and schemes
+        working-directory: mac-widget
+        run: |
+          xcodebuild -list -project PilotCadetWidget.xcodeproj
+
+      - name: Refresh the snapshot bundled into the widget
+        # status.json is the source of truth. The widget falls back to a bundled copy when the
+        # live feed is unreachable, so sync it at build time rather than letting it drift.
+        run: cp status.json mac-widget/BundledStatus.json
+
+      - name: Build the host app and the widget extension
+        working-directory: mac-widget
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project PilotCadetWidget.xcodeproj \
+            -scheme PilotCadet \
+            -configuration Debug \
+            -destination "platform=macOS,arch=arm64" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tail -40
+
+      - name: Verify the built products and their entitlements
+        working-directory: mac-widget
+        run: |
+          set -euo pipefail
+          APP=$(find ~/Library/Developer/Xcode/DerivedData -name "PilotCadet.app" -maxdepth 6 | head -1)
+          APEX=$(find ~/Library/Developer/Xcode/DerivedData -name "PilotCadetWidgetExtension.appex" -maxdepth 8 | head -1)
+          echo "app:  $APP"
+          echo "appex: $APEX"
+          test -n "$APP" -a -n "$APEX" || { echo "build products missing"; exit 1; }
+
+          echo "--- extension Info.plist (must declare the widgetkit extension point) ---"
+          /usr/libexec/PlistBuddy -c "Print :NSExtension:NSExtensionPointIdentifier" \
+            "$APEX/Contents/Info.plist"
+
+          echo "--- app bundle structure ---"
+          ls "$APP/Contents"
+          test -d "$APP/Contents/PlugIns/PilotCadetWidgetExtension.appex" \
+            || { echo "widget extension is not embedded in the app"; exit 1; }
+
+          echo "--- linked frameworks of the extension ---"
+          otool -L "$APEX/Contents/MacOS/PilotCadetWidgetExtension" | grep -Ei "widgetkit|swiftui"
+
+      - name: Sanity-check the Python monitor in the same run
+        # The monitor and the widget share a contract (status.json). If one side changes shape,
+        # the other breaks silently on the user's desktop - so check both here.
+        run: |
+          python3 -m pip install --quiet -r scraper/requirements.txt
+          python3 -m pytest scraper/tests -q
+          python3 - <<'PY'
+          import json, re, sys
+          from pathlib import Path
+
+          doc = json.loads(Path("status.json").read_text(encoding="utf-8"))
+          swift = Path("mac-widget/Models.swift").read_text(encoding="utf-8")
+          body = swift.split("struct ProgramStatus")[1].split("enum CodingKeys")[1].split("}")[0]
+          pairs = re.findall(r'case (\w+)(?:\s*=\s*"([^"]+)")?', body)
+          expected = [(v if v else k) for k, v in pairs]
+          record = doc["programs"][0]
+          missing = [k for k in expected if k not in record]
+          if missing:
+              sys.exit(f"status.json is missing fields the widget decodes: {missing}")
+          if len(doc["programs"]) != 7:
+              sys.exit(f"expected 7 programmes, found {len(doc['programs'])}")
+          print("status.json <-> Models.swift contract: OK")
+          PY

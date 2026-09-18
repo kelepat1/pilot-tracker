@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the PilotCadetWidget EXTENSION.
+
+  A widget extension is sandboxed too, and it needs network client access to fetch the
+  published status.json. The App Group is what lets it read the last-known-good payload the
+  host app cached.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!--
+	  App Groups is intentionally NOT enabled here. A free ("personal team") Apple ID cannot sign
+	  the App Groups capability ("Personal development teams do not support the App Groups
+	  capability"), and the capability is only an optimisation: WidgetConfig falls back to the
+	  widget's own UserDefaults and uses the defaultStatusURL compiled into the source. If you
+	  have a paid team and want the host app to hand the endpoint URL to the widget, re-add:
+
+	      <key>com.apple.security.application-groups</key>
+	      <array><string>group.com.example.pilotcadet</string></array>
+
+	  to both PilotCadet.entitlements and PilotCadetWidget.entitlements, and set
+	  WidgetConfig.appGroupIdentifier to the same string.
+	-->
+</dict>
+</plist>

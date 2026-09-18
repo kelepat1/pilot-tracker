@@ -1,0 +1,236 @@
+name: Daily pilot cadet check
+
+# Passive daily sweep of the seven airline career portals at 08:00 UTC.
+# Nothing runs on your computer: GitHub's runners do the fetch, the diff and the alerting.
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+    inputs:
+      program:
+        description: "Limit the run to one programme id (blank = all)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Render alerts without sending them and without committing status.json"
+        type: boolean
+        required: false
+        default: false
+
+# Never let a manual run and the cron sweep fight over status.json.
+concurrency:
+  group: pilot-tracker-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: Scrape, classify, alert
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use a token that can push back to the default branch. The default GITHUB_TOKEN
+          # is enough when "Read and write permissions" is enabled for the workflow
+          # (Settings -> Actions -> General -> Workflow permissions).
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: scraper/requirements.txt
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('scraper/requirements.txt') }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scraper/requirements.txt
+
+      - name: Install headless Chromium
+        run: |
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "Browser cache hit - installing OS libraries only"
+            python -m playwright install-deps chromium || true
+          else
+            python -m playwright install --with-deps chromium
+          fi
+
+      - name: Verify the extraction engine (offline fixtures)
+        run: python -m pytest scraper/tests -q
+
+      - name: Run the daily check
+        run: |
+          set -o pipefail
+          ARGS="--targets scraper/targets.json --output status.json --transitions-out build/transitions.json"
+          if [ -n "${{ inputs.program }}" ]; then
+            for pid in ${{ inputs.program }}; do ARGS="$ARGS --program $pid"; done
+          fi
+          python scraper/monitor.py $ARGS
+
+      - name: Fail if every programme errored
+        # One broken portal is expected and tolerated; all of them failing means the runner,
+        # the network, or the config is broken and a human needs to know.
+        run: |
+          python - <<'PY'
+          import json, sys
+          doc = json.load(open("status.json", encoding="utf-8"))
+          programs = doc.get("programs", [])
+          errored = [p for p in programs if p.get("consecutive_failures")]
+          print(f"checked={len(programs)} errored={len(errored)}")
+          for p in errored:
+              print(f"  ! {p['id']}: {p.get('error')}")
+          if programs and len(errored) == len(programs):
+              sys.exit("every programme failed this run - check the workflow logs")
+          PY
+
+      - name: Dispatch alerts (Telegram + email)
+        # continue-on-error: a broken mail relay must never stop the status update from
+        # reaching your Mac widget. Alert failures are surfaced in the job log and summary.
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
+          EMAIL_API_KEY: ${{ secrets.EMAIL_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_SECURITY: ${{ secrets.SMTP_SECURITY }}
+          NOTIFY_DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: |
+          python scraper/notifier.py \
+            --transitions build/transitions.json \
+            --verbose
+
+      - name: Commit status.json when it changed
+        if: ${{ !inputs.dry_run }}
+        run: |
+          if git diff --quiet -- status.json && [ -z "$(git status --porcelain -- status.json)" ]; then
+            echo "status.json is unchanged - nothing to commit"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add status.json
+          git commit -m "chore(status): daily cadet check $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
+
+      - name: Keep the run artefacts (diagnostics)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pilot-tracker-run-${{ github.run_number }}
+          path: |
+            status.json
+            build/transitions.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  publish:
+    name: Publish status.json to GitHub Pages
+    needs: check
+    if: ${{ !cancelled() && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out the freshly committed state
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Assemble the Pages site
+        run: |
+          mkdir -p _site
+          cp status.json _site/status.json
+          cat > _site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Pilot cadet programme status</title>
+            <style>
+              :root { color-scheme: light dark; }
+              body { margin: 0; padding: 40px 20px; background: #0b0c0e; color: #f5f5f7;
+                     font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+              main { max-width: 780px; margin: 0 auto; }
+              h1 { font-size: 22px; margin: 0 0 4px; }
+              p.meta { color: #8e8e93; font-size: 13px; margin: 0 0 24px; }
+              table { width: 100%; border-collapse: collapse; }
+              td, th { padding: 10px 8px; border-bottom: 1px solid #26282c; text-align: left; }
+              th { color: #8e8e93; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+              .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+              .OPEN { background: #1a7f37; color: #fff; }
+              .INTEREST { background: #b45309; color: #fff; }
+              .CLOSED { background: #3a3a3c; color: #d1d1d6; }
+              .UNKNOWN, .ERROR { background: #4b4b4d; color: #fff; }
+              a { color: #0a84ff; }
+              code { background: #1c1c1e; padding: 2px 6px; border-radius: 6px; font-size: 12px; }
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>Pilot cadet programme status</h1>
+              <p class="meta">Machine-readable feed: <a href="status.json">status.json</a> &middot; updated daily at 08:00 UTC</p>
+              <div id="app">Loading&hellip;</div>
+            </main>
+            <script>
+              const PILL = s => `<span class="pill ${s}">${s}</span>`;
+              fetch('status.json', { cache: 'no-store' })
+                .then(r => r.json())
+                .then(doc => {
+                  const rows = doc.programs.map(p => `
+                    <tr>
+                      <td><strong>${p.airline}</strong><br><span class="meta">${p.program}</span></td>
+                      <td>${PILL(p.status)}</td>
+                      <td>${p.passport_label || p.passport || ''}</td>
+                      <td><a href="${p.apply_url}" rel="noopener">apply</a></td>
+                      <td class="meta">${(p.evidence || '').slice(0, 90)}</td>
+                    </tr>`).join('');
+                  document.getElementById('app').innerHTML = `
+                    <table>
+                      <thead><tr><th>Programme</th><th>Status</th><th>Passport</th><th>Link</th><th>Evidence</th></tr></thead>
+                      <tbody>${rows}</tbody>
+                    </table>
+                    <p class="meta">Generated ${doc.generated_at} &middot; <code>${JSON.stringify(doc.summary)}</code></p>`;
+                })
+                .catch(err => { document.getElementById('app').textContent = 'Could not load status.json: ' + err; });
+            </script>
+          </body>
+          </html>
+          HTML
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artefact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

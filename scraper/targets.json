@@ -1,0 +1,565 @@
+{
+  "$comment": [
+    "Programme catalogue for the pilot cadet monitor.",
+    "",
+    "STATUS SEMANTICS (deliberate, and the reason INTEREST outranks CLOSED):",
+    "  OPEN     - applications are being accepted right now. This is the alert state.",
+    "  INTEREST - the window is shut BUT the airline offers a programme-specific route to be",
+    "             notified when it reopens (talent pool, job alerts, prep-hub registration).",
+    "             Orange in the widget because there is something useful to do today.",
+    "  CLOSED   - no window and no notification route. Nothing actionable.",
+    "  UNKNOWN  - the page was reachable but said nothing decisive (bot wall, load-shedding,",
+    "             redesign). Shown in the widget so a blind scraper is visible instead of",
+    "             being silently reported as CLOSED.",
+    "  ERROR    - the check failed outright; the last known status is kept and the row is",
+    "             flagged stale.",
+    "",
+    "RULE ORDER IS SEMANTIC: the first matching rule wins. Shared rule sets are expanded in",
+    "the order listed, then the programme's own rules. Negations ('not currently open') must",
+    "therefore appear before affirmations, because the negation text contains the word 'open'.",
+    "",
+    "Every URL below was observed live on 2026-09-18 unless its note says otherwise; the raw",
+    "evidence is in docs/portal-research-uk.md and docs/portal-research-eu.md."
+  ],
+  "version": 1,
+  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 PilotCadetMonitor/1.0 (passive daily status check; +https://github.com/)",
+  "polite_delay_s": 2.5,
+  "max_retries": 3,
+  "retry_backoff_s": 3.0,
+  "request_timeout_s": 30.0,
+  "defaults": {
+    "engine": "static",
+    "auto_escalate": true,
+    "wait_until": "domcontentloaded",
+    "post_load_wait_ms": 1800,
+    "min_text_chars": 200,
+    "timeout_s": 30,
+    "fallback_status": "CLOSED",
+    "content_selectors": [
+      "main",
+      "[role=\"main\"]",
+      "article",
+      "#content",
+      ".content",
+      "body"
+    ],
+    "apply_link_selectors": [
+      "a[href]"
+    ]
+  },
+  "rule_sets": {
+    "common_en": [
+      {
+        "status": "UNKNOWN",
+        "match": "(?i)\\b(?:just\\s+a\\s+moment|checking\\s+your\\s+browser|verify\\s+you\\s+are\\s+(?:a\\s+)?human|enable\\s+javascript\\s+and\\s+cookies|px-captcha|attention\\s+required|access\\s+denied|request\\s+unsuccessful)\\b",
+        "note": "Bot-protection interstitial: the real page was never served, so report UNKNOWN rather than inventing a status."
+      },
+      {
+        "status": "UNKNOWN",
+        "match": "(?i)(?:pardon\\s+our\\s+interruption|made\\s+us\\s+think\\s+you\\s+were\\s+a\\s+bot|you(?:'|’)?ve\\s+disabled\\s+javascript|incapsula\\s+incident\\s+id|distil)",
+        "note": "Imperva/Distil bot wall. www.aerlingus.com served exactly this to every plain HTTP client on 2026-09-18 - with HTTP 200 - so without this rule the wall classifies as an ordinary page."
+      },
+      {
+        "status": "UNKNOWN",
+        "match": "(?i)(?:experiencing\\s+high\\s+demand|we\\s+are\\s+busy|high\\s+demand\\s+on\\s+ba\\.com|please\\s+try\\s+again\\s+later|temporarily\\s+unavailable|scheduled\\s+maintenance|we\\u2019ll\\s+be\\s+back\\s+soon|under\\s+maintenance)",
+        "note": "Load-shedding or maintenance page served with HTTP 200. www.britishairways.com is documented doing exactly this, which would otherwise be read as a status change."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\b(?:applications?|programme|scheme|portal|intake)\\b[^.]{0,60}?\\b(?:is|are|remain|remains)\\s+not\\s+(?:currently\\s+|yet\\s+|presently\\s+)?(?:open|accepting)\\b",
+        "phase": "negation",
+        "note": "Explicit negation. Must be evaluated before the OPEN rules because it contains the word 'open'."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\bnot\\s+(?:currently\\s+|yet\\s+)?(?:open|accepting\\s+applications?)\\s+for\\s+applications?\\b",
+        "phase": "negation",
+        "note": "Explicit negation ('not currently open for applications')."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\bno\\s+longer\\s+(?:accepting|taking|inviting)\\s+applications?\\b",
+        "phase": "negation",
+        "note": "Explicit negation ('no longer accepting applications')."
+      },
+      {
+        "status": "OPEN",
+        "match": "(?i)\\bapplications?\\b[^.]{0,60}?\\b(?:are|is|have|has|will\\s+be)\\s+(?:now\\s+|currently\\s+|officially\\s+)?(?:re)?open(?:ed)?\\b",
+        "note": "Definitive open wording, tolerating a short qualifier ('Applications for 2027 are now open')."
+      },
+      {
+        "status": "OPEN",
+        "match": "(?i)\\b(?:now\\s+|we\\s+are\\s+)?accepting\\s+applications?\\b",
+        "note": "'Now accepting applications'."
+      },
+      {
+        "status": "OPEN",
+        "match": "(?i)\\bapplications?\\s+(?:now\\s+)?open\\s+(?:until|from|on|through|for)\\b",
+        "note": "'Applications open until/from <date>'."
+      },
+      {
+        "status": "OPEN",
+        "match": "(?i)\\b(?:apply\\s+now|applications?\\s+(?:are\\s+)?(?:now\\s+)?open)\\b[^.]{0,160}?\\b(?:cadet|pilot\\s+academy|speedbird|flightpath|future\\s+pilot|mpl|cadets?\\s+air\\s+france)\\b|\\b(?:cadet|pilot\\s+academy|speedbird|flightpath|future\\s+pilot|mpl|cadets?\\s+air\\s+france)\\b[^.]{0,160}?\\b(?:apply\\s+now|applications?\\s+(?:are\\s+)?(?:now\\s+)?open)\\b",
+        "note": "Apply CTA within 160 characters of a cadet-programme keyword. Proximity, not whole-page co-occurrence, to avoid firing on an unrelated 'Apply now' elsewhere on the site."
+      },
+      {
+        "status": "INTEREST",
+        "match": "(?i)\\bregister\\s+your\\s+interest\\b",
+        "note": "Talent-pool registration: actionable even though the window is shut."
+      },
+      {
+        "status": "INTEREST",
+        "match": "(?i)\\bjoin\\s+(?:our\\s+|the\\s+)?talent\\s+(?:pool|community|network|bank|pipeline)\\b",
+        "note": "Talent pool."
+      },
+      {
+        "status": "INTEREST",
+        "match": "(?i)\\b(?:expression|expressions)\\s+of\\s+interest\\b",
+        "note": "Expressions of interest invited."
+      },
+      {
+        "status": "INTEREST",
+        "match": "(?i)\\b(?:be\\s+the\\s+first\\s+to\\s+know|notify\\s+me\\s+(?:when|as\\s+soon)|let\\s+you\\s+know\\s+(?:as\\s+soon\\s+as|when)|we\\s+will\\s+contact\\s+you\\s+when)\\b",
+        "note": "Notification promises aimed at this programme's next window. Deliberately excludes 'keep an eye on this page': that is the absence of a notification route, and it is exactly what this monitor replaces."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\bapplications?\\b[^.]{0,60}?\\b(?:are|is|have|has|will\\s+be)\\s+(?:now\\s+|currently\\s+|officially\\s+)?closed\\b",
+        "note": "Definitive closed wording ('Applications for 2026 have now closed')."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\bapplications?\\s+(?:are\\s+)?(?:now\\s+)?closed\\b",
+        "note": "Short closed wording ('Applications Are Now Closed')."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\b(?:application|recruitment|intake)\\s+(?:window|period|process|round)\\b[^.]{0,40}?\\b(?:is|has|will\\s+be)\\s+(?:now\\s+)?(?:closed|complete|completed|finished)\\b",
+        "note": "The application window is closed/complete."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\bno\\s+(?:current\\s+)?(?:vacanc(?:y|ies)|openings?|positions?)\\b",
+        "note": "No vacancies advertised."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\bnot\\s+currently\\s+recruiting\\b",
+        "note": "Not recruiting."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\b(?:decided\\s+not\\s+to\\s+run|not\\s+required\\s+to\\s+meet\\s+our\\s+pilot\\s+demand|will\\s+not\\s+be\\s+running)\\b",
+        "note": "Programme explicitly shelved for the season (TUI's 2026 MPL wording, which is also what a re-published page would say)."
+      }
+    ],
+    "job_alerts_interest": [
+      {
+        "status": "INTEREST",
+        "match": "(?i)\\b(?:sign\\s*up|subscribe|register|create|set\\s*up)\\s+(?:for\\s+|to\\s+)?(?:our\\s+|a\\s+|job\\s+|search\\s+|email\\s+)*alerts?\\b",
+        "note": "Programme page offers a job-alert / search-agent registration. Only applied to programmes whose cadet page advertises this route (BA, Jet2): a generic site-wide newsletter does not qualify."
+      }
+    ],
+    "french": [
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\bles\\s+candidatures\\s+ne\\s+sont\\s+pas\\s+(?:encore\\s+)?ouvertes\\b",
+        "phase": "negation",
+        "note": "Negation first: 'les candidatures ne sont pas ouvertes' contains 'ouvertes'."
+      },
+      {
+        "status": "OPEN",
+        "match": "(?i)\\bcandidatures?\\b[^.]{0,60}?\\b(?:sont|est|seront)\\s+(?:d[ée]sormais\\s+|actuellement\\s+|maintenant\\s+)?ouvertes?\\b",
+        "note": "'Les candidatures sont ouvertes'."
+      },
+      {
+        "status": "OPEN",
+        "match": "(?i)\\b(?:nous\\s+)?accept(?:ons|e)\\s+(?:les|des|vos)\\s+candidatures\\b",
+        "note": "'Nous acceptons les candidatures'."
+      },
+      {
+        "status": "INTEREST",
+        "match": "(?i)\\b(?:alerte|alertes)\\s+emploi\\b",
+        "note": "French job-alert registration."
+      },
+      {
+        "status": "INTEREST",
+        "match": "(?i)\\b(?:candidature\\s+spontan[ée]e|[êe]tre\\s+inform[ée](?:e)?|informez-moi|tenez-moi\\s+inform[ée])\\b",
+        "note": "Being informed of future openings."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\bcandidatures?\\b[^.]{0,60}?\\b(?:sont|est|seront)\\s+(?:d[ée]sormais\\s+|actuellement\\s+)?(?:closes?|ferm[ée]es?)\\b",
+        "note": "'Les candidatures sont closes'."
+      }
+    ],
+    "hungarian": [
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\bjelentkez[ée]si\\s+id[őo]szak\\s+(?:m[ée]g\\s+)?nem\\s+(?:ny[íi]lt|kezd[őo]d[öo]tt)\\b",
+        "phase": "negation",
+        "note": "Hungarian negation first."
+      },
+      {
+        "status": "OPEN",
+        "match": "(?i)\\bjelentkez[ée]si\\s+id[őo]szak\\s+(?:megny[íi]lt|elindult|nyitva)\\b",
+        "note": "'A jelentkezési időszak megnyílt'."
+      },
+      {
+        "status": "OPEN",
+        "match": "(?i)\\bjelentkez[ée]seket?\\s+(?:fogadunk|v[áa]runk|elfogadunk)\\b",
+        "note": "'Jelentkezéseket fogadunk'."
+      },
+      {
+        "status": "INTEREST",
+        "match": "(?i)\\b(?:[ée]rtes[íi]t[ée]st?\\s+k[ée]rek|jelentkezz\\s+a\\s+talent\\s+poolba)\\b",
+        "note": "Hungarian notification request."
+      },
+      {
+        "status": "CLOSED",
+        "match": "(?i)\\b(?:a\\s+)?jelentkez[ée]si\\s+id[őo]szak\\s+(?:lez[áa]rult|v[ée]get\\s+[ée]rt)\\b",
+        "note": "'A jelentkezési időszak lezárult'."
+      }
+    ]
+  },
+  "programs": [
+    {
+      "id": "ba-speedbird",
+      "airline": "British Airways",
+      "program": "Speedbird Pilot Academy",
+      "passport": "UK",
+      "passport_label": "🇬🇧 UK",
+      "rtw_scope": "UK Right to Work",
+      "primary_url": "https://careers.ba.com/speedbird-pilot-academy-preparation",
+      "apply_url": "https://apply.ba.com/jobs/alertregister",
+      "fallback_urls": [
+        "https://careers.ba.com/future-pilots"
+      ],
+      "watch_urls": [
+        "https://careers.ba.com/search-jobs?k=Speedbird",
+        "https://careers.ba.com/Your-flight-deck-journey-starts-here",
+        "https://apply.ba.com/jobs/alertregister"
+      ],
+      "rule_sets": [
+        "common_en",
+        "job_alerts_interest"
+      ],
+      "content_selectors": [
+        "main",
+        "[data-section-guide]",
+        "div.ewa-rteLine",
+        ".text-wrap",
+        "body"
+      ],
+      "apply_link_selectors": [
+        "a[href]"
+      ],
+      "fallback_status": "CLOSED",
+      "fallback_note": "Speedbird preparation page reachable but containing no open/closed wording.",
+      "rules": [
+        {
+          "status": "OPEN",
+          "probe": {
+            "selector": "a[href*='speedbird-pilot-academy/22348'], a[href*='/job/'][href*='speedbird']",
+            "text_match": "(?i)speedbird",
+            "min_count": 1
+          },
+          "note": "A live Speedbird requisition on the BA job board (Radancy pattern /job/<location>/<slug>/22348/<id>) means the window is genuinely open."
+        },
+        {
+          "status": "INTEREST",
+          "match": "(?i)\\b(?:discover\\s*&\\s*prep|register\\s+here\\s+to\\s+view|register\\s+an\\s+account\\s+on\\s+our)\\b",
+          "note": "BA's cadet-specific prep-hub registration - the documented interest route for Speedbird."
+        }
+      ],
+      "notes": "Poll the preparation page, never www.britishairways.com (documented load-shedding page served with HTTP 200). BA opens once per year; the job board k=Speedbird search is the corroborating signal. /Your-flight-deck-journey-starts-here was stale on 2026-09-18 (advertised a window that had already closed) and is therefore watched, not polled."
+    },
+    {
+      "id": "jet2-flightpath",
+      "airline": "Jet2.com",
+      "program": "Jet2FlightPath Scheme",
+      "passport": "UK",
+      "passport_label": "🇬🇧 UK",
+      "rtw_scope": "UK Right to Work",
+      "primary_url": "https://jet2careers.com/pilot-careers/jet2flightpath/",
+      "apply_url": "https://krb-sjobs.brassring.com/TGNewUI/Search/Home/Home?partnerid=30013&siteid=5476",
+      "fallback_urls": [
+        "https://jet2careers.com/pilot-careers/"
+      ],
+      "watch_urls": [
+        "https://krb-sjobs.brassring.com/TGWebHost/home.aspx?partnerid=30013&siteid=5476#home",
+        "https://jet2careers.com/pilot-careers/jet2flightpath/course-information/"
+      ],
+      "rule_sets": [
+        "common_en",
+        "job_alerts_interest"
+      ],
+      "content_selectors": [
+        "main",
+        "div.column-text",
+        "#appProcess",
+        "body"
+      ],
+      "apply_link_selectors": [
+        "a[href]"
+      ],
+      "fallback_status": "CLOSED",
+      "fallback_note": "Jet2FlightPath page reachable but containing no open/closed wording.",
+      "rules": [
+        {
+          "status": "OPEN",
+          "probe": {
+            "selector": "a.btn.btn-long[href], a.btn-long[href*='brassring']",
+            "text_match": "(?i)\\bapply\\b|\\bopen\\b",
+            "min_count": 1
+          },
+          "note": "The FlightPath CTA anchor is the status indicator: while shut it is href=\"\" and reads 'Applications Are Now Closed'; when the window reopens it carries the BrassRing apply link. Scrape the anchor TEXT - a link-following crawler sees nothing while closed."
+        }
+      ],
+      "notes": "Canonical host is jet2careers.com (/pilots/jet2flightpath/ 301-redirects here). www.jet2.com was unreachable during the 2026-09-18 survey and is not polled. Applications run through IBM BrassRing (partnerid=30013), which is an Angular SPA: the apply URL only becomes discoverable once a requisition exists."
+    },
+    {
+      "id": "tui-mpl",
+      "airline": "TUI Airways",
+      "program": "MPL Cadet Programme",
+      "passport": "UK",
+      "passport_label": "🇬🇧 UK",
+      "rtw_scope": "UK Right to Work",
+      "primary_url": "https://careers.tuigroup.com/en/mpl",
+      "apply_url": "https://careers.tuigroup.com/en/pilots",
+      "fallback_urls": [],
+      "watch_urls": [
+        "https://careers.tuigroup.com/en/pilots",
+        "https://careers.tuigroup.com/en/sitemap.xml",
+        "https://career5.successfactors.eu/career?career_company=tuiinfotec&lang=en_GB&company=tuiinfotec&site=&loginFlowRequired=true"
+      ],
+      "rule_sets": [
+        "common_en"
+      ],
+      "content_selectors": [
+        "main",
+        ".text-wrap",
+        "body"
+      ],
+      "apply_link_selectors": [
+        "a[href]"
+      ],
+      "http_status_overrides": {
+        "404": "CLOSED"
+      },
+      "http_status_override_note": "TUI deleted the MPL information page it had told candidates to watch (HTTP 404 since mid-2026, still listed in the HTML sitemap but absent from the XML sitemap). On this URL a 404 means no intake page is published, so the correct reading is CLOSED rather than a scraper error; the page reappearing with open wording is the signal to watch for.",
+      "fallback_status": "CLOSED",
+      "fallback_note": "TUI MPL page reachable but containing no open/interest wording.",
+      "rules": [
+        {
+          "status": "CLOSED",
+          "match": "(?i)\\bwe(?:'|\\u2019)?ve\\s+decided\\s+not\\s+to\\s+run\\b",
+          "note": "TUI's wording when it shelved the 2026 intake ('we've decided not to run our MPL Cadet scheme in 2026')."
+        }
+      ],
+      "notes": "Deliberately has NO fallback URL: on this programme a 404 is the status, so falling through to /en/pilots would mask it. TUI's 'please keep an eye on this page for updates on future opportunities' is intentionally NOT treated as INTEREST: it offers no notification route, so the honest reading is CLOSED (nothing for the candidate to do, and this monitor does the watching). www.tui.co.uk is Akamai-protected (403) and must not be polled. When the page is republished, /en/sitemap.xml regains an mpl entry, which is why it is watched."
+    },
+    {
+      "id": "aerlingus-future-pilot",
+      "airline": "Aer Lingus",
+      "program": "Future Pilot Programme",
+      "passport": "EU",
+      "passport_label": "🇪🇺 EU",
+      "rtw_scope": "EU/EEA Right to Work",
+      "primary_url": "https://www.aerlingus.com/careers/careers-in-the-air/future-pilot-programme/",
+      "apply_url": "https://www.aerlingus.com/careers/careers-in-the-air/future-pilot-programme/",
+      "fallback_urls": [
+        "https://www.aerlingus.com/careers/careers-in-the-air/"
+      ],
+      "watch_urls": [
+        "https://mediacentre.aerlingus.com/",
+        "https://apply.workable.com/api/v1/widget/accounts/nobox-hr-outsourcing-solutions?details=true"
+      ],
+      "rule_sets": [
+        "common_en"
+      ],
+      "content_selectors": [
+        "div[cms-section][is-bottom='true'] div[cms-aside] div[cms-paragraph].centered",
+        "div[cms-section]",
+        "main",
+        "body"
+      ],
+      "apply_link_selectors": [
+        "a[href]"
+      ],
+      "fallback_status": "CLOSED",
+      "fallback_note": "Aer Lingus pilot careers page reachable but containing no open/interest wording.",
+      "rules": [
+        {
+          "status": "CLOSED",
+          "match": "(?i)\\b(?:programme|scheme)\\s+is\\s+now\\s+closed\\s+for\\s+applications?\\b",
+          "note": "Aer Lingus's own closed wording: 'The Future Pilot Programme is now closed for applications.' Note that the word 'applications' comes after 'closed', so the shared patterns do not catch it."
+        },
+        {
+          "status": "OPEN",
+          "match": "(?i)[\"']?title[\"']?\\s*[:>]\\s*[\"']?[^\"',<>]{0,40}?\\b(?:future\\s+pilot|cadet|ab\\s?initio)\\b",
+          "note": "A live 'Future Pilot' / cadet vacancy title on the recruitment feed (secondary source). This is the only OPEN signal available while aerlingus.com serves an Imperva block page."
+        }
+      ],
+      "notes": "www.aerlingus.com sits behind an Imperva/Incapsula WAF: every path answers HTTP 200 with a 10 kB 'Pardon Our Interruption' block page, so the status code is meaningless and the monitor must content-sniff (the guard rule reports UNKNOWN when the wall wins). A real browser is required, hence engine=playwright. When the wall wins, the secondary Workable feed for Aer Lingus's pilot recruitment partner is consulted instead; today it lists 6 non-pilot vacancies, so an expected result is UNKNOWN-with-no-talent-pool or CLOSED. Applications are collected off-site (emailmeform for the 2025 cycle, Workable for the 2025/26 direct-entry cycle), which is why vacancies appear in the feed rather than on the page.",
+      "secondary_text_urls": [
+        "https://apply.workable.com/api/v1/widget/accounts/nobox-hr-outsourcing-solutions?details=true"
+      ],
+      "engine": "playwright",
+      "auto_escalate": true,
+      "min_text_chars": 400
+    },
+    {
+      "id": "airfrance-cadets",
+      "airline": "Air France",
+      "program": "Cadets Air France",
+      "passport": "EU",
+      "passport_label": "🇪🇺 EU",
+      "rtw_scope": "EU/EEA Right to Work",
+      "primary_url": "https://recrutement.airfrance.com/handlers/offerRss.ashx?LCID=1036&Rss_Profile=3743",
+      "apply_url": "https://recrutement.airfrance.com/offre-de-emploi/liste-toutes-offres.aspx?all=1&mode=list",
+      "fallback_urls": [
+        "https://recrutement.airfrance.com/accueil.aspx?LCID=1036"
+      ],
+      "watch_urls": [
+        "https://recrutement.airfrance.com/offre-de-emploi/liste-toutes-offres.aspx?all=1&mode=list",
+        "https://corporate.airfrance.com/"
+      ],
+      "rule_sets": [
+        "common_en",
+        "french"
+      ],
+      "content_selectors": [
+        "channel",
+        "rss",
+        "main",
+        "body"
+      ],
+      "apply_link_selectors": [
+        "a[href]",
+        "item link",
+        "link"
+      ],
+      "fallback_status": "CLOSED",
+      "fallback_note": "The 'Pilote Cadet' offer feed contained no cadet vacancy, which is how Air France signals a closed window - the site carries no open/closed sentence.",
+      "rules": [
+        {
+          "status": "OPEN",
+          "probe": {
+            "selector": "item",
+            "text_match": "(?i)cadet",
+            "min_count": 1
+          },
+          "note": "The RSS facet is filtered server-side to 'Personnel Navigant --> Pilote Cadet', so the presence of any <item> IS a live Cadets Air France campaign. Zero items means no cadet opening."
+        },
+        {
+          "status": "INTEREST",
+          "match": "(?i)\\b(?:alerte|alertes)\\s+emploi\\b",
+          "note": "Air France's job-alert registration on the career site."
+        }
+      ],
+      "notes": "Status is read from Air France's own filtered RSS facet rather than the HTML: recrutement.airfrance.com is a TalentSoft (Cegid) career site whose facet filtering is POST-only, so GET parameters are silently ignored (the '?keyword=cadet' list page returns all 87 offers). The RSS channel is literally titled 'Profil : Personnel Navigant-->Pilote Cadet'. corporate.airfrance.com, which announces the campaign, is Cloudflare-protected (403) and is only watched. The Jun-Jul 2026 campaign has closed and the historic requisition now 302-redirects to the home page.",
+      "engine": "static",
+      "min_text_chars": 60
+    },
+    {
+      "id": "wizzair-pilot-academy",
+      "airline": "Wizz Air",
+      "program": "Wizz Air Pilot Academy",
+      "passport": "EU",
+      "passport_label": "🇪🇺 EU",
+      "rtw_scope": "EU/EEA Right to Work",
+      "primary_url": "https://careers.wizzair.com/go/Pilot-Academy/5382601/",
+      "apply_url": "https://careers.wizzair.com/job/Wizz-Air-Group-Wizz-Air-Pilot-Academy-Programme-H-1103/748689401/",
+      "fallback_urls": [
+        "https://careers.wizzair.com/search/?q=pilot+academy",
+        "https://careers.wizzair.com/go/Cadet-Pilot-Programs-%28Navigation-Page%29/8903201/"
+      ],
+      "watch_urls": [
+        "https://careers.wizzair.com/talentcommunity/subscribe/?locale=en_US"
+      ],
+      "rule_sets": [
+        "common_en",
+        "hungarian"
+      ],
+      "content_selectors": [
+        "#wapa",
+        ".wapa-action-bar",
+        "main",
+        "#search-results",
+        ".jobsTable",
+        "body"
+      ],
+      "apply_link_selectors": [
+        "a[href]"
+      ],
+      "fallback_status": "CLOSED",
+      "fallback_note": "Wizz Air careers search reachable but containing no cadet listings or open/interest wording.",
+      "rules": [
+        {
+          "status": "OPEN",
+          "probe": {
+            "selector": "a.wapa-action-apply, a.jobTitle-link",
+            "text_match": "(?i)apply|pilot\\s+academy|cadet\\s+pilot",
+            "min_count": 1
+          },
+          "note": "Course-row 'Apply now' links (a.wapa-action-apply, one per published start date) or a live Pilot Academy requisition on the search page. Both are present in the raw HTML."
+        },
+        {
+          "status": "INTEREST",
+          "match": "(?i)\\bjoin\\s+(?:our\\s+)?talent\\s+community\\b",
+          "note": "Wizz Air runs a SuccessFactors talent community for candidates who miss a window."
+        }
+      ],
+      "notes": "Server-rendered SuccessFactors Career Site Builder (careers.wizzair.com CNAME to jobs2web.com): the status text and course start dates are in the raw HTML, while only the apply action needs JavaScript. The academy page lists upcoming course start dates with per-date apply links, so an OPEN reading can be corroborated against the vacancy search. Eligibility is nationality-restricted (Hungary and neighbours), which is why this programme is tagged EU/EEA Right to Work.",
+      "engine": "static"
+    },
+    {
+      "id": "cathay-cadet",
+      "airline": "Cathay Pacific",
+      "program": "Cadet Pilot Programme",
+      "passport": "Global",
+      "passport_label": "🌍 Global",
+      "rtw_scope": "International / Targeted RTW",
+      "primary_url": "https://careers.cathaypacific.com/en/careers/jobs/hong-kong/cadet-pilot-programme-31538",
+      "apply_url": "https://careers-apply.cathaypacific.com/Public/APPLY/apply.html?jobId=QM1FK026203F3VBQBLO797VAG-31538&langCode=en_GB&job_number=31538&department=flight-operations-fop&location=hong-kong-sar-china&job_function=flight-crew&brand=cathay-pacific",
+      "fallback_urls": [
+        "https://careers.cathaypacific.com/en/careers/our-teams/pilot"
+      ],
+      "watch_urls": [
+        "https://careers.cathaypacific.com/sitemap.xml",
+        "https://careers.cathaypacific.com/en/careers/jobs?jobtype=sponsorship"
+      ],
+      "rule_sets": [
+        "common_en"
+      ],
+      "content_selectors": [
+        "div.job-detail__grid__main",
+        "div.job-detail",
+        "main#content",
+        "main",
+        "body"
+      ],
+      "apply_link_selectors": [
+        "a[href]"
+      ],
+      "fallback_status": "CLOSED",
+      "fallback_note": "Cathay careers search reachable but containing no cadet pilot listings or open/interest wording.",
+      "rules": [
+        {
+          "status": "OPEN",
+          "match": "(?i)\\bapplications?\\b[^.]{0,80}?\\bare\\s+open\\s+year[-\\s]?round\\b",
+          "note": "Cathay's own wording: 'Applications to the ~80-week Cathay Cadet Pilot Programme are open year-round.'"
+        },
+        {
+          "status": "OPEN",
+          "match": "(?i)\\bapply\\s+for\\s+cadet\\s+pilot\\s+programme\\b",
+          "note": "The site-wide nav CTA. Only counted as OPEN alongside the job-detail page, which is the primary URL."
+        }
+      ],
+      "notes": "CrafterCMS-behind-CloudFront job detail page: server-rendered, no bot protection, so no browser needed. The programme page states applications are open year-round, which makes the practical signal the absence of that page/CTA rather than a date window. Poll the job-detail URL or the sitemap (it carries a lastmod for the cadet URL and is cheap to diff); do NOT poll the /en/careers/jobs listing, which is client-rendered from Handlebars templates. Discovery is disabled here because every 'Apply' link on the page is a navigation CTA for a different role (flight attendant, customer services).",
+      "engine": "static",
+      "prefer_configured_apply_url": true
+    }
+  ]
+}
