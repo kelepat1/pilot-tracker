@@ -50,19 +50,24 @@ enum WidgetConfig {
 
     // MARK: - Shared defaults
 
-    /// True when the shared App Group container is genuinely available.
+    /// Whether the App Groups capability is actually signed into both targets.
     ///
-    /// It is **not** by default: App Groups is disabled in both `.entitlements` files so that a
-    /// free ("personal team") Apple ID can sign the project at all. When this is false the
-    /// widget can only use the endpoint compiled into `defaultStatusURL`, and the host app's
-    /// "Save URL" field cannot reach it — the app says so in its own UI.
-    static var isUsingAppGroup: Bool {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) != nil
-    }
+    /// Set this to `true` only after enabling App Groups in `PilotCadet.entitlements` and
+    /// `PilotCadetWidget.entitlements` (a paid team is required — a free personal team cannot
+    /// sign the capability).
+    ///
+    /// It is a compile-time constant on purpose, because it cannot be detected reliably at
+    /// runtime: without the entitlement, `containerURL(forSecurityApplicationGroupIdentifier:)`
+    /// still returns a path *inside the app's own sandbox*, and `UserDefaults(suiteName:)`
+    /// cheerfully writes `group.<name>.plist` there. Each sandbox then gets its own copy, so the
+    /// host app's "Save URL" field looks like it reached the widget when it never did. Verified
+    /// on 2026-09-18: the widget cached the feed into
+    /// `group.com.example.pilotcadet.plist` inside its own container with no entitlement present.
+    static let appGroupsEnabled = false
 
-    /// Shared defaults when the App Group exists, otherwise this process's own defaults.
+    /// Shared defaults when App Groups really is enabled, otherwise this process's own defaults.
     static var sharedDefaults: UserDefaults {
-        if isUsingAppGroup, let shared = UserDefaults(suiteName: appGroupIdentifier) {
+        if appGroupsEnabled, let shared = UserDefaults(suiteName: appGroupIdentifier) {
             return shared
         }
         return .standard

@@ -59,7 +59,7 @@ struct SettingsView: View {
                     // Be explicit rather than silently misleading: without the App Group the
                     // sandboxed widget cannot read the value saved here, so the endpoint the
                     // widget uses is the one compiled into WidgetConfig.swift.
-                    if !WidgetConfig.isUsingAppGroup {
+                    if !WidgetConfig.appGroupsEnabled {
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: "info.circle.fill")
                                 .font(.system(size: 10))
