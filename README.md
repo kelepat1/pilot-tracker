@@ -22,7 +22,9 @@ pilot-tracker/
 │   └── tests/                          # 67 offline tests, no network needed
 ├── mac-widget/
 │   ├── PilotCadetWidget.xcodeproj/      # ready-to-open project: host app + widget extension
-│   ├── PilotCadetWidget.swift           # WidgetKit widget + TimelineProvider (medium & large)
+│   ├── PilotCadetWidget.swift           # widget, TimelineProvider, four supported sizes
+│   ├── WidgetContentViews.swift         # the layout for each widget size
+│   ├── preview/                         # offscreen renderer + layout fit checks
 │   ├── Models.swift                     # Decodable models matching status.json
 │   ├── WidgetConfig.swift               # endpoint, App Group, refresh schedule, cache
 │   ├── StatusViews.swift                # shared status/passport pills (both targets)
@@ -149,7 +151,10 @@ open mac-widget/PilotCadetWidget.xcodeproj
    app saves it into the shared defaults, which the widget reads first).
 5. Run the **PilotCadet** scheme (⌘R), then add the widget: **System Settings → Desktop & Dock →
    Widgets → Edit Widgets**, or right-click the desktop → *Edit Widgets* → search "Pilot Cadet
-   Watch". `systemMedium` and `systemLarge` are supported.
+   Watch". All four macOS sizes are supported — **small** (170×170, the actionable programmes
+   only), **medium** (364×170, three rows), **large** (364×382, all seven with the deciding
+   wording) and **extra-large** (776×382, two columns with counts). Add whichever fits your
+   desktop; they all read the same `status.json`.
 
 Deployment target is **macOS 14.0**, so Sonoma and Sequoia are both fine.
 
@@ -302,6 +307,23 @@ through `DEVELOPER_DIR` instead of changing your machine's selection. (Switching
 one command — `sudo xcode-select -s /Applications/Xcode.app` — and is optional.) It also reports
 the licence gate explicitly if Xcode is installed but `sudo xcodebuild -license accept` has not
 been run yet.
+
+### Verifying the widget *layouts*
+
+A widget that clips is only visible once it is on the desktop, so the layouts are measured
+offscreen at the real point size of every family:
+
+```bash
+mac-widget/preview/render.sh      # writes PNGs to mac-widget/preview/out/ and checks fit
+```
+
+It renders each size (plus long-name, offline and dark-appearance variants) and then compares each
+layout's intrinsic size against the usable box, exiting non-zero if anything overflows. That check
+is what caught medium being 27 pt too tall — four two-line rows do not fit 170 pt — and it is why
+the widget calls `.contentMarginsDisabled()` and applies its own margin: the numbers in the report
+are then exactly what macOS gives the layout, instead of depending on WidgetKit's default inset.
+Height is a hard failure; width is reported only, because rows deliberately truncate long evidence
+at the tail.
 
 `check-pbxproj.py` exists because Xcode's own error for a malformed project file is hard to read
 back. It catches duplicate object IDs, dangling references, product wiring and extension

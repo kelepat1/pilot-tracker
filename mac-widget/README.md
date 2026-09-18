@@ -1,6 +1,6 @@
 # mac-widget — native macOS status widget
 
-WidgetKit widget (`systemMedium` / `systemLarge`, macOS 14+) that renders the seven cadet
+WidgetKit widget (small, medium, large and extra-large, macOS 14+) that renders the seven cadet
 programmes from your published `status.json`, with green/orange/gray status pills, 🇬🇧/🇪🇺/🌍
 passport pills, and a click-through deep link on every row.
 
@@ -98,9 +98,24 @@ entirely, since Xcode ships a matched toolchain and its own SDKs.
 | `*.entitlements` | App Sandbox, network client, App Group (identical group in both) |
 | `Package.swift` | SwiftPM view of the shared, Xcode-independent sources |
 | `verify-build.sh` | Build verification; falls back to CLT-only checks |
+| `WidgetContentViews.swift` | The layout for every widget size (no `@main`, so it can be rendered offscreen) |
+| `preview/` | Offscreen renderer + layout fit checks (`preview/render.sh`) |
 | `check-pbxproj.py` | Static project-file validation (duplicate IDs, wiring, embedding) |
 | `check-contract.py` | Asserts `status.json` and `Models.swift` still agree |
 | `BundledStatus.json` | Snapshot of `status.json` shipped inside the extension, used when the live feed is unreachable |
+
+## Sizes
+
+| Family | Points | Layout |
+|---|---|---|
+| `systemSmall` | 170×170 | The count (`2 open`), then up to three actionable programmes as dot + airline + flag. No status pill or programme name: at this size they would truncate rather than inform. |
+| `systemMedium` | 364×170 | Three rows with airline, programme, passport pill and status pill. Three, not four — four overflowed by 27 pt once measured. |
+| `systemLarge` | 364×382 | All seven rows, each with the wording that decided the status. |
+| `systemExtraLarge` | 776×382 | A count strip plus seven rows in two columns, each with programme *and* evidence. |
+
+WidgetKit's own content margins are disabled (`.contentMarginsDisabled()`) so the margin is 12 pt
+(small) or 14 pt (everything else), matching `preview/Renderer.swift` exactly. Layouts are checked
+at their real size by `preview/render.sh`, which fails if a layout needs more height than it has.
 
 ## How the widget picks its data
 

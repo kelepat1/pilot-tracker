@@ -37,3 +37,6 @@ build/*.xcarchive
 .vscode/
 .idea/
 .swiftpm/
+
+# Widget layout preview renders (regenerate with mac-widget/preview/render.sh)
+mac-widget/preview/out/

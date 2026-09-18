@@ -17,6 +17,7 @@
 		AA0000000000000000021400 /* StatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000010400 /* StatusViews.swift */; };
 		AA0000000000000000022000 /* PilotCadetWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AA0000000000000000001300 /* PilotCadetWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AA0000000000000000023000 /* BundledStatus.json in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000014000 /* BundledStatus.json */; };
+		AA0000000000000000024000 /* WidgetContentViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000015000 /* WidgetContentViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -50,6 +51,7 @@
 		AA0000000000000000010200 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		AA0000000000000000010300 /* WidgetConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetConfig.swift; sourceTree = "<group>"; };
 		AA0000000000000000010400 /* StatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusViews.swift; sourceTree = "<group>"; };
+		AA0000000000000000015000 /* WidgetContentViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetContentViews.swift; sourceTree = "<group>"; };
 		AA0000000000000000010500 /* PilotCadetWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PilotCadetWidget.swift; sourceTree = "<group>"; };
 		AA0000000000000000010600 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA0000000000000000010700 /* PilotCadet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PilotCadet.entitlements; sourceTree = "<group>"; };
@@ -90,6 +92,7 @@
 				AA0000000000000000010900 /* README.md */,
 				AA0000000000000000010100 /* PilotCadetApp.swift */,
 				AA0000000000000000010500 /* PilotCadetWidget.swift */,
+				AA0000000000000000015000 /* WidgetContentViews.swift */,
 				AA0000000000000000010200 /* Models.swift */,
 				AA0000000000000000010300 /* WidgetConfig.swift */,
 				AA0000000000000000010400 /* StatusViews.swift */,
@@ -220,7 +223,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AA0000000000000000021100 /* PilotCadetWidget.swift in Sources */,
+
+				AA0000000000000000024000 /* WidgetContentViews.swift in Sources */,				AA0000000000000000021100 /* PilotCadetWidget.swift in Sources */,
 				AA0000000000000000021200 /* Models.swift in Sources */,
 				AA0000000000000000021300 /* WidgetConfig.swift in Sources */,
 				AA0000000000000000021400 /* StatusViews.swift in Sources */,

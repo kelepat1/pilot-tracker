@@ -32,6 +32,7 @@ let package = Package(
             exclude: [
                 "PilotCadetApp.swift",
                 "PilotCadetWidget.swift",
+                "preview",
                 "PilotCadetWidget.xcodeproj",
                 "Info.plist",
                 "PilotCadet.entitlements",
@@ -44,6 +45,7 @@ let package = Package(
                 "Models.swift",
                 "WidgetConfig.swift",
                 "StatusViews.swift",
+                "WidgetContentViews.swift",
             ]
         )
     ]
